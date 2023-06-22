@@ -1,8 +1,49 @@
 import fetch from 'node-fetch'; // for node 16
+// commented in waiting PR to be merged
+// https://github.com/Azure/fetch-event-source/pull/28
+// import { fetchEventSource } from '@microsoft/fetch-event-source';
+import { fetchEventSource, EventStreamContentType } from 'fetch-event-source-hperrin';
+
 import { v4 as uuidv4 } from 'uuid';
-import { request as octokitRequest } from "@octokit/request"; // for node 16
+import { networkInterfaces } from 'os';
+import crypto from 'crypto';
 
 import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
+
+
+function getMacAddress() {
+  const invalidMacAddresses = new Set(["00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "ac:de:48:00:11:22"]);
+
+  function isValidMac(mac) {
+    const normalizedMac = mac.replace(/-/g, ":").toLowerCase();
+    return !invalidMacAddresses.has(normalizedMac);
+  }
+
+  let macAddress = null;
+  const interfaces = networkInterfaces();
+
+  for (const interfaceKey in interfaces) {
+    const interfaceValue = interfaces[interfaceKey];
+    if (interfaceValue) {
+      for (const { mac } of interfaceValue) {
+        if (isValidMac(mac)) {
+          return mac;
+        }
+      }
+    }
+  }
+}
+
+function getMachineId() {
+  let machineId = null;
+  try {
+    const macAddress = getMacAddress();
+    machineId = crypto.createHash("sha256").update(macAddress, "utf8").digest("hex")
+  } catch (error) {
+    console.log("Error getting mac address: %s", error.message);
+  }
+  return machineId || uuidv4();
+}
 
 const auth = createOAuthDeviceAuth({
   clientType: "oauth-app",
@@ -60,9 +101,6 @@ const auth = createOAuthDeviceAuth({
 
   const completionsUrl = 'https://copilot-proxy.githubusercontent.com/v1/engines/copilot-codex/completions'
 
-  // TODO: you need to add that
-  const machineId = "" // generated from mac address, created in EditorSession in agent.js
-
   const completionParams = {
     "method": "POST",
     "headers": {
@@ -70,7 +108,7 @@ const auth = createOAuthDeviceAuth({
       "X-Request-Id": uuidv4(),
       "Openai-Organization": "github-copilot",
       "VScode-SessionId": uuidv4() + Date.now(),
-      "VScode-MachineId": machineId,
+      "VScode-MachineId": getMachineId(),
       "Editor-Version": "JetBrains-IC/231.9011.34", // TODO
       "Editor-Plugin-Version": "copilot-intellij/1.2.8.2631", // TODO
       "OpenAI-Intent": "copilot-ghost"
@@ -119,9 +157,41 @@ const auth = createOAuthDeviceAuth({
   console.log(completionParams)
 
 
-  // TODO: we need to handle stream here
-  const completions = await fetch(completionsUrl, completionParams)
-    // .then(response => response.json())
-        .then(response => console.log(response))
-  console.log(completions)
+  const completionsResponse = await fetchEventSource(completionsUrl, {
+    ...completionParams,
+    fetch: fetch,
+    async onopen(response) {
+        if (response.ok && response.headers.get('content-type') === EventStreamContentType) {
+            return; // everything's good
+        } else if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+            // client-side errors are usually non-retriable:
+            // throw new FatalError();
+          console.log(response)
+        } else {
+            // throw new RetriableError();
+          console.log(response)
+        }
+    },
+    onmessage(msg) {
+      console.log("Got message")
+      console.log(msg)
+    },
+    onclose() {
+      console.log('onclose')
+
+      // throw new RetriableError();
+    },
+    onerror(err) {
+      console.log(err)
+
+      // if (err instanceof FatalError) {
+      // throw err; // rethrow to stop the operation
+      // } else {
+      //   // do nothing to automatically retry. You can also
+      //   // return a specific retry interval here.
+      // }
+    }
+  })
+
+  console.log(completionsResponse)
 })()

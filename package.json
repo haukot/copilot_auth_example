@@ -10,8 +10,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@microsoft/fetch-event-source": "^2.0.1",
     "@octokit/auth-oauth-device": "^4.0.2",
     "@octokit/core": "^3.2.4",
+    "fetch-event-source-hperrin": "^3.0.0",
     "node-fetch": "^3.3.1",
     "uuid": "^9.0.0"
   }
